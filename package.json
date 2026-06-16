@@ -1,27 +1,26 @@
 {
   "name": "signalk-saillogger",
-  "version": "5.1.0",
-  "description": "Maintenance-free, fully automated logbook and remote boat monitoring solution",
+  "version": "5.1.0-entropy.1",
+  "description": "Signal K plugin that pushes position data to the entropysaillog tracker ingest (fork of signalk-saillogger)",
   "main": "index.js",
   "signalk-plugin-enabled-by-default": true,
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node lib/payload.test.js"
   },
   "keywords": [
     "signalk-node-server-plugin"
   ],
-  "author": "Saillogger LLC",
+  "author": "Saillogger LLC; entropysaillog fork",
   "license": "Apache-2.0",
   "dependencies": {
-    "node-machine-id": "^1.1.12",
     "request": "^2.88.0"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Saillogger/signalk-saillogger.git"
+    "url": "git+https://github.com/johnsocp/signalk-saillogger.git"
   },
   "bugs": {
-    "url": "https://github.com/Saillogger/signalk-saillogger/issues"
+    "url": "https://github.com/johnsocp/signalk-saillogger/issues"
   },
-  "homepage": "https://github.com/Saillogger/signalk-saillogger#readme"
+  "homepage": "https://github.com/johnsocp/signalk-saillogger#readme"
 }
