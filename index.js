@@ -33,6 +33,7 @@ const filePath = require('path')
 const request = require('request')
 const { BufferStore } = require('./lib/storage')
 const { buildBatch } = require('./lib/payload')
+const { sign } = require('./lib/auth')
 const package = require('./package.json');
 const userAgent = `entropysaillog plugin v${package.version}`;
 
@@ -44,6 +45,7 @@ module.exports = function(app) {
   var bufferStore;
   var endpoint;
   var apiKey;
+  var secret;
   var gpsSource;
   var configuration;
   var updateLastCalled;
@@ -88,6 +90,10 @@ module.exports = function(app) {
         type: "string",
         title: "API key (sent as the x-api-key header)"
       },
+      secret: {
+        type: "string",
+        title: "HMAC signing secret (recommended) — signs each push with x-signature"
+      },
       source: {
         type: "string",
         title: "GPS source (optional; leave empty if unsure)"
@@ -100,6 +106,7 @@ module.exports = function(app) {
 
     endpoint = options.endpoint;
     apiKey = options.apiKey;
+    secret = options.secret;
     gpsSource = options.source;
 
     if (!endpoint || !apiKey) {
@@ -294,14 +301,23 @@ module.exports = function(app) {
 
     app.debug(`Submitting batch ${batch.batch_id} (${batch.points.length} point(s)) of ${queueLength} cached`);
 
+    // Serialize once so the signature covers the exact bytes we send. Re-sign on
+    // every attempt (incl. retries) with the current time, so the replay window
+    // is satisfied even for batches buffered through a long dropout.
+    const body = JSON.stringify(batch);
+    const headers = { 'User-Agent': userAgent, 'Content-Type': 'application/json' };
+    if (apiKey) headers['x-api-key'] = apiKey;
+    if (secret) {
+      const ts = Math.floor(Date.now() / 1000).toString();
+      headers['x-timestamp'] = ts;
+      headers['x-signature'] = sign(secret, ts, body);
+    }
+
     let httpOptions = {
       uri: endpoint,
       method: 'POST',
-      json: batch,
-      headers: {
-        'User-Agent': userAgent,
-        'x-api-key': apiKey
-      },
+      body: body,
+      headers: headers,
       timeout: 45000
     };
 

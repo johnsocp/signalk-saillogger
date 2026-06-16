@@ -5,7 +5,7 @@
   "main": "index.js",
   "signalk-plugin-enabled-by-default": true,
   "scripts": {
-    "test": "node lib/payload.test.js"
+    "test": "node lib/payload.test.js && node lib/auth.test.js"
   },
   "keywords": [
     "signalk-node-server-plugin"
