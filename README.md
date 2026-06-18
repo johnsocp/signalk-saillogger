@@ -57,13 +57,14 @@ Each push is one versioned-contract batch:
 ## Develop
 
 ```bash
-npm install          # request (only runtime dep)
-npm test             # pure unit tests for the payload builder + signing
+npm install          # no runtime dependencies (native http/https)
+npm test             # unit tests: payload builder, signing, and the http POST
 ```
 
 `lib/payload.js` builds the contract payload + the durable `batch_id`; it is pure
 and unit-tested so the plugin's output provably matches the ingest contract.
-`lib/auth.js` mirrors the server's HMAC signing byte-for-byte.
+`lib/auth.js` mirrors the server's HMAC signing byte-for-byte. `lib/http.js` is a
+tiny native-`https` JSON POST (the plugin has zero runtime dependencies).
 
 ## License
 
