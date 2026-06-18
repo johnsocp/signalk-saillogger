@@ -79,20 +79,22 @@ module.exports = function(app) {
 
   plugin.schema = {
     type: 'object',
-    required: ['endpoint', 'apiKey'],
+    required: ['endpoint'],
     properties: {
       endpoint: {
         type: "string",
         title: "Ingest URL",
         description: "POST /ingest endpoint, e.g. https://xxxxx.execute-api.<region>.amazonaws.com/ingest"
       },
-      apiKey: {
-        type: "string",
-        title: "API key (sent as the x-api-key header)"
-      },
       secret: {
         type: "string",
-        title: "HMAC signing secret (recommended) — signs each push with x-signature"
+        title: "HMAC signing secret (recommended)",
+        description: "Signs each push with x-timestamp + x-signature. Preferred auth; set this and leave API key empty."
+      },
+      apiKey: {
+        type: "string",
+        title: "API key (optional fallback)",
+        description: "Sent as x-api-key. Only used if no HMAC secret is set. Provide a secret OR an API key."
       },
       source: {
         type: "string",
@@ -109,8 +111,8 @@ module.exports = function(app) {
     secret = options.secret;
     gpsSource = options.source;
 
-    if (!endpoint || !apiKey) {
-      app.setPluginError('endpoint and apiKey are required');
+    if (!endpoint || (!apiKey && !secret)) {
+      app.setPluginError('endpoint and at least one credential (secret recommended, or apiKey) are required');
       return;
     }
     app.debug(`Starting the plugin, pushing to ${endpoint}`);
