@@ -30,7 +30,7 @@ const BATCH_LIMIT = 500      // Max points per push (ingest contract caps at 100
 
 const fs = require('fs')
 const filePath = require('path')
-const request = require('request')
+const { postJson } = require('./lib/http.js')
 const { BufferStore } = require('./lib/storage')
 const { buildBatch } = require('./lib/payload')
 const { sign } = require('./lib/auth')
@@ -315,16 +315,8 @@ module.exports = function(app) {
       headers['x-signature'] = sign(secret, ts, body);
     }
 
-    let httpOptions = {
-      uri: endpoint,
-      method: 'POST',
-      body: body,
-      headers: headers,
-      timeout: 45000
-    };
-
-    request(httpOptions, function (error, response, body) {
-      if (!error && response.statusCode == 200) {
+    postJson(endpoint, headers, body, 45000).then(function (response) {
+      if (response.statusCode == 200) {
         app.debug(`Successfully submitted batch ${batch.batch_id}`);
         try {
           bufferStore.deleteUpTo(lastTs);
@@ -336,15 +328,19 @@ module.exports = function(app) {
         } catch (err) {
           app.debug(`Error deleting from buffer: ${err}`);
         }
-      } else if (!error && response.statusCode == 400) {
+      } else if (response.statusCode == 400) {
         // Contract rejection: this batch will never be accepted as-is. Drop it
         // so it doesn't block the queue. (Should not happen — payload is built
         // to the contract; logged loudly if it does.)
-        app.error(`Ingest rejected batch ${batch.batch_id} (HTTP 400): ${JSON.stringify(body)}. Dropping.`);
+        app.error(`Ingest rejected batch ${batch.batch_id} (HTTP 400): ${response.body}. Dropping.`);
         try { bufferStore.deleteUpTo(lastTs); } catch (err) { app.debug(`Error deleting: ${err}`); }
       } else {
-        app.debug(`${response?.statusCode ? `HTTP-${response.statusCode}` : error || 'Unknown error'}, retry in ${SUBMIT_INTERVAL} min`);
+        app.debug(`HTTP-${response.statusCode}, retry in ${SUBMIT_INTERVAL} min`);
       }
+      updatePluginStatus();
+    }).catch(function (error) {
+      // Transport failure (connect error / timeout): keep the buffer, retry.
+      app.debug(`${error && error.message ? error.message : 'Unknown error'}, retry in ${SUBMIT_INTERVAL} min`);
       updatePluginStatus();
     });
   }
