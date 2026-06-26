@@ -58,6 +58,8 @@ module.exports = function(app) {
   var courseOverGroundTrue;
   var windSpeedApparent = 0;
   var angleSpeedApparent;
+  var windSpeedTrue;
+  var windDirectionTrue;
   var portEngineHours;
   var starboardEngineHours;
   var previousSpeeds = [];
@@ -137,6 +139,12 @@ module.exports = function(app) {
         period: POLL_INTERVAL * 1000
       }, {
         path: 'environment.wind.angleApparent',
+        period: POLL_INTERVAL * 1000
+      }, {
+        path: 'environment.wind.speedTrue',
+        period: POLL_INTERVAL * 1000
+      }, {
+        path: 'environment.wind.directionTrue',
         period: POLL_INTERVAL * 1000
       }, {
         path: 'propulsion.port.runTime',
@@ -250,6 +258,8 @@ module.exports = function(app) {
       courseOverGroundTrue: courseOverGroundTrue,
       windSpeedApparent: windSpeedApparent,
       angleSpeedApparent: angleSpeedApparent,
+      windSpeedTrue: windSpeedTrue,
+      windDirectionTrue: windDirectionTrue,
       portEngineHours: portEngineHours,
       starboardEngineHours: starboardEngineHours,
       additionalData: null
@@ -262,6 +272,8 @@ module.exports = function(app) {
         app.debug(`Inserted logging data into the local cache`);
         queueLength++;
         windSpeedApparent = 0;
+        windSpeedTrue = null;
+        windDirectionTrue = null;
         maxSpeedOverGround = 0;
         portEngineHours = null;
         starboardEngineHours = null;
@@ -419,6 +431,15 @@ module.exports = function(app) {
         break;
       case 'environment.wind.angleApparent':
         angleSpeedApparent = radiantToDegrees(value);
+        break;
+      case 'environment.wind.speedTrue':
+        // Latest reading in the window (reset to null after each insert), so a
+        // dead wind source stops publishing wind instead of sending a stale value.
+        windSpeedTrue = metersPerSecondToKnots(value);
+        break;
+      case 'environment.wind.directionTrue':
+        // True wind direction (degrees true, the direction the wind blows FROM).
+        windDirectionTrue = radiantToDegrees(value);
         break;
       case 'propulsion.port.runTime':
         portEngineHours = Math.round(10 * value / 3600) / 10;
