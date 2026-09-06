@@ -48,10 +48,12 @@ When the plotter has an active route, each batch also carries a vessel-level
 `next_waypoint` object (`name`, `lat`, `lon`, `distance_m`, `time_to_go_s`,
 `observed_at`) built from `navigation.courseGreatCircle.nextPoint.{position,
 distance,timeToGo,href}` — falling back to `navigation.courseRhumbline.*` when
-the great-circle snapshot is missing or over 5 minutes old. The name is resolved
-best-effort from the `href` via the Signal K resources API; if it doesn't
-resolve, the field is simply absent. The name is sanitized before it is sent —
-control characters stripped, trimmed, and truncated to 80 code points (never
+the great-circle snapshot is missing or over 5 minutes old (but *not* when the
+great-circle route was cleared less than 5 minutes ago — a clear is not undone
+by the other course type's leg). The name is resolved best-effort from the
+`href` via the Signal K resources API; if it doesn't resolve, the field is
+simply absent. The name is sanitized before it is sent — control characters and
+unpaired surrogates stripped, trimmed, and truncated to 80 code points (never
 mid-character) — and omitted when nothing usable is left. Snapshots older than 5
 minutes are not sent; any `nextPoint` update (position, distance, time to go, or
 href) keeps the snapshot fresh, so a fixed mark doesn't age out mid-leg.
