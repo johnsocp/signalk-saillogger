@@ -7,6 +7,7 @@
   "files": [
     "index.js",
     "lib/auth.js",
+    "lib/course.js",
     "lib/http.js",
     "lib/payload.js",
     "lib/storage.js",
@@ -14,7 +15,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node lib/payload.test.js && node lib/auth.test.js && node lib/http.test.js"
+    "test": "node lib/payload.test.js && node lib/course.test.js && node lib/auth.test.js && node lib/http.test.js"
   },
   "keywords": [
     "signalk-node-server-plugin"

@@ -32,7 +32,8 @@ const fs = require('fs')
 const filePath = require('path')
 const { postJson } = require('./lib/http.js')
 const { BufferStore } = require('./lib/storage')
-const { buildBatch, COURSE_MAX_AGE_MS } = require('./lib/payload')
+const { buildBatch } = require('./lib/payload')
+const { createCourseTracker } = require('./lib/course')
 const { sign } = require('./lib/auth')
 const package = require('./package.json');
 const userAgent = `entropysaillog plugin v${package.version}`;
@@ -64,13 +65,12 @@ module.exports = function(app) {
   var starboardEngineHours;
   var previousSpeeds = [];
   var previousCOGs = [];
-  // Active-route snapshots from the plotter, one per course path. Great circle
-  // is preferred; rhumbline is only used when great circle is missing or stale.
-  var courseSnapshots = {};
-  // Set when a route goes from a real next point to null, cleared once the
-  // server has accepted the batch that carried next_waypoint: null.
-  var courseClearPending = false;
+  // Active-route ("next waypoint") state machine; see lib/course.js. Great
+  // circle is preferred, rhumbline is the fallback, and a route clear is held
+  // until the server has accepted the batch that carried next_waypoint: null.
+  var courseTracker = createCourseTracker();
   // href -> resolved waypoint name (or null when it could not be resolved).
+  // Memoizes the resources lookup, including the failures.
   var waypointNames = {};
 
   plugin.id = "signalk-saillogger";
@@ -335,16 +335,10 @@ module.exports = function(app) {
     }
 
     const lastTs = rows[rows.length - 1].ts;
-    // undefined = say nothing about the route; null = it was cleared (sent once,
-    // until the server accepts it); a snapshot = upsert it (payload.js drops it
-    // if it is stale).
-    let course;
-    const snapshot = chooseCourseSnapshot();
-    if (snapshot && snapshot.cleared) {
-      if (courseClearPending) course = null;
-    } else if (snapshot) {
-      course = snapshot;
-    }
+    // undefined = say nothing about the route; null = it was cleared (resent
+    // until the server accepts it); a snapshot = upsert it (stale snapshots are
+    // already filtered out by choose()).
+    const course = courseTracker.choose(Date.now());
     const batch = buildBatch(rows, course);
     if (!batch) {
       // Every peeked row was an unusable fix (bad coords/timestamp). Purge them
@@ -372,10 +366,8 @@ module.exports = function(app) {
     postJson(endpoint, headers, body, 45000).then(function (response) {
       if (response.statusCode == 200) {
         app.debug(`Successfully submitted batch ${batch.batch_id}`);
-        if (batch.next_waypoint === null) {
-          // The cleared route reached the server; stop resending the null.
-          courseClearPending = false;
-        }
+        // If this batch carried the cleared route, stop resending the null.
+        courseTracker.onBatchAccepted(batch.next_waypoint === null);
         try {
           bufferStore.deleteUpTo(lastTs);
           lastSuccessfulUpdate = Date.now();
@@ -445,43 +437,9 @@ module.exports = function(app) {
     return Math.round(ms * 1.94384 * 10) / 10;
   }
 
-  // Prefix ('navigation.courseGreatCircle' | 'navigation.courseRhumbline') of a
-  // subscribed nextPoint path.
-  function coursePrefix(path) {
-    return path.slice(0, path.indexOf('.nextPoint'));
-  }
-
-  // A nextPoint.position update. A null value means the route was cleared.
-  function updateCoursePosition(prefix, value) {
-    const previous = courseSnapshots[prefix];
-    if (!value || typeof value.latitude !== 'number' || typeof value.longitude !== 'number') {
-      if (previous && !previous.cleared) {
-        courseClearPending = true;
-      }
-      courseSnapshots[prefix] = { cleared: true, changedOn: Date.now() };
-      return;
-    }
-    const snapshot = (previous && !previous.cleared) ? previous : {};
-    snapshot.cleared = false;
-    snapshot.latitude = value.latitude;
-    snapshot.longitude = value.longitude;
-    snapshot.changedOn = Date.now();
-    courseSnapshots[prefix] = snapshot;
-  }
-
-  // distance / timeToGo / href update the current snapshot in place; they do not
-  // refresh changedOn (only a position fix does).
-  function updateCourseField(prefix, field, value) {
-    const snapshot = courseSnapshots[prefix];
-    if (!snapshot || snapshot.cleared) {
-      return;
-    }
-    snapshot[field] = value;
-  }
-
   // Best-effort waypoint name lookup. Never blocks a push: the name is attached
   // to the snapshot if and when it resolves, and any failure is swallowed.
-  function resolveWaypointName(prefix, href) {
+  function resolveWaypointName(href) {
     if (typeof href !== 'string') {
       return;
     }
@@ -490,7 +448,7 @@ module.exports = function(app) {
       return;
     }
     if (href in waypointNames) {
-      applyWaypointName(prefix, href, waypointNames[href]);
+      courseTracker.applyResolvedName(href, waypointNames[href]);
       return;
     }
     if (!app.resourcesApi || typeof app.resourcesApi.getResource !== 'function') {
@@ -502,34 +460,13 @@ module.exports = function(app) {
           ? resource.name
           : null;
         waypointNames[href] = name;
-        applyWaypointName(prefix, href, name);
+        courseTracker.applyResolvedName(href, name);
       }).catch(function (err) {
         app.debug(`Could not resolve waypoint name for ${href}: ${err}`);
       });
     } catch (err) {
       app.debug(`Could not resolve waypoint name for ${href}: ${err}`);
     }
-  }
-
-  function applyWaypointName(prefix, href, name) {
-    const snapshot = courseSnapshots[prefix];
-    if (name && snapshot && !snapshot.cleared && snapshot.href === href) {
-      snapshot.name = name;
-    }
-  }
-
-  // Great circle wins unless it is missing or older than the contract's 5 min
-  // staleness bound, in which case we fall back to rhumbline.
-  function chooseCourseSnapshot() {
-    const greatCircle = courseSnapshots['navigation.courseGreatCircle'];
-    const rhumbline = courseSnapshots['navigation.courseRhumbline'];
-    if (greatCircle && (Date.now() - greatCircle.changedOn <= COURSE_MAX_AGE_MS)) {
-      return greatCircle;
-    }
-    if (rhumbline) {
-      return rhumbline;
-    }
-    return greatCircle;
   }
 
   function processDelta(data) {
@@ -576,20 +513,16 @@ module.exports = function(app) {
         break;
       case 'navigation.courseGreatCircle.nextPoint.position':
       case 'navigation.courseRhumbline.nextPoint.position':
-        updateCoursePosition(coursePrefix(path), value);
-        break;
       case 'navigation.courseGreatCircle.nextPoint.distance':
       case 'navigation.courseRhumbline.nextPoint.distance':
-        updateCourseField(coursePrefix(path), 'distance', value);
-        break;
       case 'navigation.courseGreatCircle.nextPoint.timeToGo':
       case 'navigation.courseRhumbline.nextPoint.timeToGo':
-        updateCourseField(coursePrefix(path), 'timeToGo', value);
+        courseTracker.applyDelta(path, value, Date.now());
         break;
       case 'navigation.courseGreatCircle.nextPoint.href':
       case 'navigation.courseRhumbline.nextPoint.href':
-        updateCourseField(coursePrefix(path), 'href', value);
-        resolveWaypointName(coursePrefix(path), value);
+        courseTracker.applyDelta(path, value, Date.now());
+        resolveWaypointName(value);
         break;
       case 'propulsion.port.runTime':
         portEngineHours = Math.round(10 * value / 3600) / 10;

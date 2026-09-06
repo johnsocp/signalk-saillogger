@@ -50,8 +50,11 @@ When the plotter has an active route, each batch also carries a vessel-level
 distance,timeToGo,href}` — falling back to `navigation.courseRhumbline.*` when
 the great-circle snapshot is missing or over 5 minutes old. The name is resolved
 best-effort from the `href` via the Signal K resources API; if it doesn't
-resolve, the field is simply absent. Snapshots older than 5 minutes are not
-sent.
+resolve, the field is simply absent. The name is sanitized before it is sent —
+control characters stripped, trimmed, and truncated to 80 code points (never
+mid-character) — and omitted when nothing usable is left. Snapshots older than 5
+minutes are not sent; any `nextPoint` update (position, distance, time to go, or
+href) keeps the snapshot fresh, so a fixed mark doesn't age out mid-leg.
 
 The three states are distinct on the wire: the key **absent** means "no news,
 leave the stored course alone", an explicit **`null`** (sent once, when the
