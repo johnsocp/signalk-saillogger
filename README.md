@@ -42,6 +42,22 @@ Each push is one versioned-contract batch:
 }
 ```
 
+### Next waypoint (v1.2.0)
+
+When the plotter has an active route, each batch also carries a vessel-level
+`next_waypoint` object (`name`, `lat`, `lon`, `distance_m`, `time_to_go_s`,
+`observed_at`) built from `navigation.courseGreatCircle.nextPoint.{position,
+distance,timeToGo,href}` — falling back to `navigation.courseRhumbline.*` when
+the great-circle snapshot is missing or over 5 minutes old. The name is resolved
+best-effort from the `href` via the Signal K resources API; if it doesn't
+resolve, the field is simply absent. Snapshots older than 5 minutes are not
+sent.
+
+The three states are distinct on the wire: the key **absent** means "no news,
+leave the stored course alone", an explicit **`null`** (sent once, when the
+route is cleared on the plotter) tells the server to delete it, and an
+**object** upserts it.
+
 - **Auth:** with a secret configured, each push is signed — HMAC-SHA256 over
   `"<x-timestamp>.<body>"` sent as `x-signature` (mirrors the server's
   `auth.py`); the server rejects stale timestamps and bad signatures. Without a
