@@ -27,6 +27,9 @@ In the Signal K plugin config:
   secret is set. Provide a **secret OR an API key** (endpoint plus at least one
   credential is required).
 - **GPS source** *(optional)* — restrict to one GPS `$source` if you have several.
+- **Course source** *(optional)* — which Signal K course path family to read for
+  the active route: `navigation.courseGreatCircle` (the default) or
+  `navigation.courseRhumbline`.
 
 ## What it sends
 
@@ -46,17 +49,15 @@ Each push is one versioned-contract batch:
 
 When the plotter has an active route, each batch also carries a vessel-level
 `next_waypoint` object (`name`, `lat`, `lon`, `distance_m`, `time_to_go_s`,
-`observed_at`) built from `navigation.courseGreatCircle.nextPoint.{position,
-distance,timeToGo,href}` — falling back to `navigation.courseRhumbline.*` when
-the great-circle snapshot is missing or over 5 minutes old (but *not* while that
-snapshot is still on the mark it was tracking when the route was cleared on the
-other course type — a clear is never undone by the leftover leg it deleted, and
-timestamps can't tell the two apart because Signal K re-sends an unchanged value
-every period; the leftover is released as soon as its mark changes). The
-trade-off: a leg on the other course type that was genuinely live at the moment
-of the clear is hidden until its own mark changes — a plotter that emits a
-one-time null at startup and then only rhumbline legs is unaffected, since legs
-that start after that null are never suppressed. The name is resolved best-effort from the
+`observed_at`) built from one course path family's
+`nextPoint.{position,distance,timeToGo,href}`. Which family is set by the
+**Course source** option — `navigation.courseGreatCircle` (the default, what the
+Signal K course API and most N2K plotters publish) or
+`navigation.courseRhumbline` (for NMEA 0183 RMB-only setups). Only the chosen
+family is subscribed and read; deltas on the other one are ignored. Tracking a
+single family is what makes a route clear reliable: the deleted route's own path
+goes `null`, so nothing can re-publish it, and any later non-null position is a
+genuine (re)activation. The name is resolved best-effort from the
 `href` via the Signal K resources API; if it doesn't resolve, the field is
 simply absent. The name is sanitized before it is sent — control characters and
 unpaired surrogates stripped, trimmed, and truncated to 80 code points (never

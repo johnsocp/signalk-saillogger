@@ -33,7 +33,7 @@ const filePath = require('path')
 const { postJson } = require('./lib/http.js')
 const { BufferStore } = require('./lib/storage')
 const { buildBatch } = require('./lib/payload')
-const { createCourseTracker } = require('./lib/course')
+const { createCourseTracker, GREAT_CIRCLE } = require('./lib/course')
 const { sign } = require('./lib/auth')
 const package = require('./package.json');
 const userAgent = `entropysaillog plugin v${package.version}`;
@@ -65,10 +65,11 @@ module.exports = function(app) {
   var starboardEngineHours;
   var previousSpeeds = [];
   var previousCOGs = [];
-  // Active-route ("next waypoint") state machine; see lib/course.js. Great
-  // circle is preferred, rhumbline is the fallback, and a route clear is held
+  // Active-route ("next waypoint") state machine; see lib/course.js. Exactly one
+  // course prefix is read (the `coursePrefix` option), and a route clear is held
   // until the server has accepted the batch that carried next_waypoint: null.
-  var courseTracker = createCourseTracker();
+  var coursePrefix;
+  var courseTracker;
   // href -> resolved waypoint name (or null when it could not be resolved).
   // Memoizes the resources lookup, including the failures.
   var waypointNames = {};
@@ -109,6 +110,13 @@ module.exports = function(app) {
       source: {
         type: "string",
         title: "GPS source (optional; leave empty if unsure)"
+      },
+      coursePrefix: {
+        type: "string",
+        title: "Course source",
+        description: "Signal K course path family the plotter populates for the active route. Great-circle is what the Signal K course API and most N2K plotters publish; choose rhumbline for NMEA 0183 RMB-only setups. Only this family is read.",
+        enum: ["navigation.courseGreatCircle", "navigation.courseRhumbline"],
+        default: "navigation.courseGreatCircle"
       }
     }
   }
@@ -120,6 +128,8 @@ module.exports = function(app) {
     apiKey = options.apiKey;
     secret = options.secret;
     gpsSource = options.source;
+    coursePrefix = options.coursePrefix || GREAT_CIRCLE;
+    courseTracker = createCourseTracker({ prefix: coursePrefix });
 
     if (!endpoint || (!apiKey && !secret)) {
       app.setPluginError('endpoint and at least one credential (secret recommended, or apiKey) are required');
@@ -155,28 +165,16 @@ module.exports = function(app) {
         path: 'environment.wind.directionTrue',
         period: POLL_INTERVAL * 1000
       }, {
-        path: 'navigation.courseGreatCircle.nextPoint.position',
+        path: `${coursePrefix}.nextPoint.position`,
         period: POLL_INTERVAL * 1000
       }, {
-        path: 'navigation.courseGreatCircle.nextPoint.distance',
+        path: `${coursePrefix}.nextPoint.distance`,
         period: POLL_INTERVAL * 1000
       }, {
-        path: 'navigation.courseGreatCircle.nextPoint.timeToGo',
+        path: `${coursePrefix}.nextPoint.timeToGo`,
         period: POLL_INTERVAL * 1000
       }, {
-        path: 'navigation.courseGreatCircle.nextPoint.href',
-        period: POLL_INTERVAL * 1000
-      }, {
-        path: 'navigation.courseRhumbline.nextPoint.position',
-        period: POLL_INTERVAL * 1000
-      }, {
-        path: 'navigation.courseRhumbline.nextPoint.distance',
-        period: POLL_INTERVAL * 1000
-      }, {
-        path: 'navigation.courseRhumbline.nextPoint.timeToGo',
-        period: POLL_INTERVAL * 1000
-      }, {
-        path: 'navigation.courseRhumbline.nextPoint.href',
+        path: `${coursePrefix}.nextPoint.href`,
         period: POLL_INTERVAL * 1000
       }, {
         path: 'propulsion.port.runTime',
