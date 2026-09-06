@@ -30,6 +30,10 @@ In the Signal K plugin config:
 - **Course source** *(optional)* — which Signal K course path family to read for
   the active route: `navigation.courseGreatCircle` (the default) or
   `navigation.courseRhumbline`.
+- **Course source device** *(optional)* — restrict the course paths to one
+  `$source`. Left blank, the plugin locks onto the first source that reports a
+  destination after start, so a second device publishing the same family cannot
+  overwrite or delete the active route.
 
 ## What it sends
 
@@ -65,12 +69,17 @@ mid-character) — and omitted when nothing usable is left. Snapshots older than
 minutes are not sent; any `nextPoint` update (position, distance, time to go, or
 href) keeps the snapshot fresh, so a fixed mark doesn't age out mid-leg;
 `distance_m` and `time_to_go_s` age out on their own clock, so a countdown whose
-source has stopped is omitted rather than sent stale.
+source has stopped is omitted rather than sent stale. Freshness is measured from
+the delta's own source timestamp, not from arrival, so a disconnected plotter's
+last route ages out instead of being kept alive by Signal K's periodic
+re-emission of the unchanged value.
 
 The three states are distinct on the wire: the key **absent** means "no news,
 leave the stored course alone", an explicit **`null`** (sent once, when the
 route is cleared on the plotter) tells the server to delete it, and an
-**object** upserts it.
+**object** upserts it. A pending clear is persisted (`entropysaillog_course.json`
+in the plugin's data directory) and resent until the server accepts the batch
+that carried it, so a restart mid-clear does not lose the delete.
 
 - **Auth:** with a secret configured, each push is signed — HMAC-SHA256 over
   `"<x-timestamp>.<body>"` sent as `x-signature` (mirrors the server's

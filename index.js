@@ -69,6 +69,7 @@ module.exports = function(app) {
   // course prefix is read (the `coursePrefix` option), and a route clear is held
   // until the server has accepted the batch that carried next_waypoint: null.
   var coursePrefix;
+  var courseSource;
   var courseTracker;
   // href -> resolved waypoint name (or null when it could not be resolved).
   // Memoizes the resources lookup, including the failures.
@@ -117,6 +118,11 @@ module.exports = function(app) {
         description: "Signal K course path family the plotter populates for the active route. Great-circle is what the Signal K course API and most N2K plotters publish; choose rhumbline for NMEA 0183 RMB-only setups. Only this family is read.",
         enum: ["navigation.courseGreatCircle", "navigation.courseRhumbline"],
         default: "navigation.courseGreatCircle"
+      },
+      courseSource: {
+        type: "string",
+        title: "Course source device",
+        description: "Restrict the course paths to this Signal K $source. Leave blank to lock onto the first source that reports a destination after start."
       }
     }
   }
@@ -129,7 +135,7 @@ module.exports = function(app) {
     secret = options.secret;
     gpsSource = options.source;
     coursePrefix = options.coursePrefix || GREAT_CIRCLE;
-    courseTracker = createCourseTracker({ prefix: coursePrefix });
+    courseSource = options.courseSource;
 
     if (!endpoint || (!apiKey && !secret)) {
       app.setPluginError('endpoint and at least one credential (secret recommended, or apiKey) are required');
@@ -140,6 +146,13 @@ module.exports = function(app) {
 
     const dataDir = app.getDataDirPath();
     bufferStore = new BufferStore(filePath.join(dataDir, 'entropysaillog_buffer.ndjson'));
+    // The pending route clear outlives the process: a restart between the null
+    // delta and the accepted push would otherwise forget the delete forever.
+    courseTracker = createCourseTracker({
+      prefix: coursePrefix,
+      lockSource: courseSource,
+      persist: courseStateStore(filePath.join(dataDir, 'entropysaillog_course.json'))
+    });
 
     let subscription = {
       context: 'vessels.self',
@@ -347,6 +360,10 @@ module.exports = function(app) {
       return;
     }
 
+    // Which clear this batch carries, captured as it is built: a 200 arriving
+    // late for an OLDER batch must not disarm a clear armed after it was sent.
+    const clearSeq = batch.next_waypoint === null ? courseTracker.pendingClearSeq : 0;
+
     app.debug(`Submitting batch ${batch.batch_id} (${batch.points.length} point(s)) of ${queueLength} cached`);
 
     // Serialize once so the signature covers the exact bytes we send. Re-sign on
@@ -364,8 +381,8 @@ module.exports = function(app) {
     postJson(endpoint, headers, body, 45000).then(function (response) {
       if (response.statusCode == 200) {
         app.debug(`Successfully submitted batch ${batch.batch_id}`);
-        // If this batch carried the cleared route, stop resending the null.
-        courseTracker.onBatchAccepted(batch.next_waypoint === null);
+        // If this batch carried the cleared route, stop resending that null.
+        courseTracker.onBatchAccepted(clearSeq);
         try {
           bufferStore.deleteUpTo(lastTs);
           lastSuccessfulUpdate = Date.now();
@@ -467,6 +484,56 @@ module.exports = function(app) {
     }
   }
 
+  // Tiny synchronous JSON file for the course tracker's pending clear. Both
+  // directions are best-effort: a missing/corrupt file is a clean start, and a
+  // failed write only costs the durability of a clear we still hold in memory.
+  function courseStateStore(file) {
+    return {
+      load: function () {
+        try {
+          return JSON.parse(fs.readFileSync(file, 'utf8'));
+        } catch (err) {
+          app.debug(`No course state restored from ${file}: ${err}`);
+          return undefined;
+        }
+      },
+      save: function (state) {
+        try {
+          fs.writeFileSync(file, JSON.stringify(state));
+        } catch (err) {
+          app.debug(`Could not persist course state to ${file}: ${err}`);
+        }
+      }
+    };
+  }
+
+  // Freshness follows the SOURCE's timestamp, not arrival: the default `ideal`
+  // subscription policy re-sends an unchanged value every period while keeping
+  // the update's original timestamp, so a disconnected plotter's last route
+  // would otherwise look fresh forever.
+  function courseDeltaTime(data) {
+    const ts = Date.parse(data.updates[0].timestamp);
+    return Number.isFinite(ts) ? ts : Date.now();
+  }
+
+  // One device drives the course paths. Configured, that is the `courseSource`
+  // option; unconfigured, the first source to report a destination takes the
+  // lock (the tracker owns the lock itself — see lib/course.js). Without this,
+  // two devices publishing the same family alternate marks and one's null
+  // deletes the other's live route.
+  function applyCourseDelta(data, path, value) {
+    const source = data.updates[0]['$source'];
+    if ((courseSource) && (source != courseSource)) {
+      app.debug(`Skipping course delta from source ${source}`);
+      return;
+    }
+    const lockedBefore = courseTracker.lockedSource;
+    courseTracker.applyDelta(path, value, courseDeltaTime(data), source);
+    if (courseTracker.lockedSource !== lockedBefore) {
+      app.debug(`Course paths locked onto source ${courseTracker.lockedSource}`);
+    }
+  }
+
   function processDelta(data) {
     let dict = data.updates[0].values[0];
     let path = dict.path;
@@ -515,11 +582,11 @@ module.exports = function(app) {
       case 'navigation.courseRhumbline.nextPoint.distance':
       case 'navigation.courseGreatCircle.nextPoint.timeToGo':
       case 'navigation.courseRhumbline.nextPoint.timeToGo':
-        courseTracker.applyDelta(path, value, Date.now());
+        applyCourseDelta(data, path, value);
         break;
       case 'navigation.courseGreatCircle.nextPoint.href':
       case 'navigation.courseRhumbline.nextPoint.href':
-        courseTracker.applyDelta(path, value, Date.now());
+        applyCourseDelta(data, path, value);
         resolveWaypointName(value);
         break;
       case 'propulsion.port.runTime':
