@@ -1,6 +1,6 @@
 {
   "name": "signalk-entropy-saillog",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "description": "Signal K plugin that pushes position data to the entropysaillog tracker ingest (fork of signalk-saillogger)",
   "main": "index.js",
   "signalk-plugin-enabled-by-default": true,
@@ -8,6 +8,7 @@
     "index.js",
     "lib/auth.js",
     "lib/course.js",
+    "lib/delta.js",
     "lib/http.js",
     "lib/payload.js",
     "lib/storage.js",
@@ -15,7 +16,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node lib/payload.test.js && node lib/course.test.js && node lib/auth.test.js && node lib/http.test.js"
+    "test": "node lib/payload.test.js && node lib/course.test.js && node lib/auth.test.js && node lib/http.test.js && node lib/delta.test.js"
   },
   "keywords": [
     "signalk-node-server-plugin"
