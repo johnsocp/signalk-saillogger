@@ -137,7 +137,7 @@ module.exports = function(app) {
     endpoint = options.endpoint;
     apiKey = options.apiKey;
     secret = options.secret;
-    gpsGate = createGpsGate(options.source, Date.now());
+    gpsGate = createGpsGate(options.source, performance.now());
     coursePrefix = options.coursePrefix || GREAT_CIRCLE;
     courseSource = options.courseSource;
 
@@ -538,6 +538,17 @@ module.exports = function(app) {
     }
   }
 
+  // A new GPS source starts from scratch: the previous one's speed and course must
+  // not end up in a row beside the new one's position. null, not 0, so a row written
+  // before the new source reports SOG omits it rather than claiming 0 kn.
+  function clearGpsCache() {
+    speedOverGround = null;
+    maxSpeedOverGround = null;
+    courseOverGroundTrue = null;
+    previousSpeeds = [];
+    previousCOGs = [];
+  }
+
   function processDelta(data) {
     const delta = deltaValue(data);
     if (!delta) {
@@ -546,13 +557,21 @@ module.exports = function(app) {
     let path = delta.path;
     let value = delta.value;
 
-    if (!gpsGate.accepts(path, delta.source, Date.now())) {
+    const gpsSourceBefore = gpsGate.source;
+    if (!gpsGate.accepts(path, delta.source, performance.now())) {
       app.debug(`Skipping ${path} from GPS resource ${delta.source}`);
       return;
+    }
+    if (gpsGate.source !== gpsSourceBefore) {
+      app.debug(`GPS source switched from ${gpsSourceBefore} to ${gpsGate.source}`);
+      clearGpsCache();
     }
 
     switch (path) {
       case 'navigation.position':
+        if (!value) {
+          break;   // No fix; keep the last one rather than store a null position.
+        }
         position = value;
         position.changedOn = Date.now();
         updateDatabase();

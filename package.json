@@ -16,7 +16,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node lib/payload.test.js && node lib/course.test.js && node lib/auth.test.js && node lib/http.test.js && node lib/delta.test.js"
+    "test": "node lib/payload.test.js && node lib/course.test.js && node lib/auth.test.js && node lib/http.test.js && node lib/delta.test.js && node index.test.js"
   },
   "keywords": [
     "signalk-node-server-plugin"

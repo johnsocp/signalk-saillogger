@@ -20,19 +20,22 @@ other plugin — no shell/SSH access needed.)
 2.0.0 changes the plugin id from `signalk-saillogger` (shared with upstream
 Saillogger, so the two collided on one config file and data dir) to
 `signalk-entropy-saillog`. Signal K keys the config file and data dir on the id,
-so move them before restarting on 2.0.0, from the server's config dir
-(e.g. `~/.signalk`):
+so move them after installing 2.0.0 and before the server restarts on it. Stop
+the server first, so 1.x cannot buffer rows into the old dir after the move.
+From the server's config dir (e.g. `~/.signalk`):
 
 ```bash
 cd ~/.signalk/plugin-config-data
-cp -p signalk-saillogger.json signalk-entropy-saillog.json
+mv signalk-saillogger.json signalk-entropy-saillog.json
 mkdir -p signalk-entropy-saillog
-cp -p signalk-saillogger/entropysaillog_* signalk-entropy-saillog/
+mv signalk-saillogger/entropysaillog_* signalk-entropy-saillog/
 ```
 
 Without this the plugin starts unconfigured (no endpoint or secret) and logs an
-error instead of pushing. If upstream `signalk-saillogger` is no longer used,
-uninstall it; if it is, give it back its own config.
+error instead of pushing. Move the config file rather than copying it: the old
+`signalk-saillogger.json` holds this plugin's endpoint and secret, and upstream
+`signalk-saillogger` would load it if it is (or is later) installed. If upstream
+is no longer used, uninstall it.
 
 ## Configure
 
@@ -46,10 +49,12 @@ In the Signal K plugin config:
   secret is set. Provide a **secret OR an API key** (endpoint plus at least one
   credential is required).
 - **GPS source** *(optional)* — the preferred GPS `$source` if you have several.
-  Position, SOG, and COG are all taken from it, so a point never mixes one
-  device's fix with another's speed or course. If it reports no position for 30 s,
-  whatever source Signal K passes through (its source priorities pick it) is used
-  until the preferred one returns.
+  Position, SOG, and COG are all taken from one source at a time, so a point never
+  mixes one device's fix with another's speed or course. If the preferred GPS
+  reports no position for 30 s, the plugin locks onto the next source to send one
+  (Signal K's source priorities decide which reach it) until that source goes
+  quiet too or the preferred one returns. Cached SOG and COG are cleared at every
+  switch.
 - **Course source** *(optional)* — which Signal K course path family to read for
   the active route: `navigation.courseGreatCircle` (the default) or
   `navigation.courseRhumbline`.
@@ -128,8 +133,8 @@ and unit-tested so the plugin's output provably matches the ingest contract.
 `lib/auth.js` mirrors the server's HMAC signing byte-for-byte. `lib/http.js` is a
 tiny native-`https` JSON POST (the plugin has zero runtime dependencies).
 `lib/delta.js` reads one value out of a subscription delta (ignoring the
-value-less deltas Signal K sends on reconnect) and gates GPS paths on the
-configured source.
+value-less deltas Signal K sends on reconnect) and gates GPS paths to one source
+at a time. `index.test.js` drives the plugin itself against a stub Signal K app.
 
 ## License
 
