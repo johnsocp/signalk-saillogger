@@ -22,13 +22,14 @@ Saillogger, so the two collided on one config file and data dir) to
 `signalk-entropy-saillog`. Signal K keys the config file and data dir on the id,
 so move them after installing 2.0.0 and before the server restarts on it. Stop
 the server first, so 1.x cannot buffer rows into the old dir after the move.
-From the server's config dir (e.g. `~/.signalk`):
+From the server's config dir (`~/.signalk` on a Pi, `/data/conf/signalk` on
+Venus OS); `-n` never overwrites a config already saved under the new id:
 
 ```bash
 cd ~/.signalk/plugin-config-data
-mv signalk-saillogger.json signalk-entropy-saillog.json
+mv -n signalk-saillogger.json signalk-entropy-saillog.json
 mkdir -p signalk-entropy-saillog
-mv signalk-saillogger/entropysaillog_* signalk-entropy-saillog/
+mv -n signalk-saillogger/entropysaillog_* signalk-entropy-saillog/
 ```
 
 Without this the plugin starts unconfigured (no endpoint or secret) and logs an

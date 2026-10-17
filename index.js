@@ -36,6 +36,7 @@ const { buildBatch } = require('./lib/payload')
 const { createCourseTracker, GREAT_CIRCLE } = require('./lib/course')
 const { sign } = require('./lib/auth')
 const { deltaValue, createGpsGate } = require('./lib/delta')
+const { performance } = require('perf_hooks')
 const package = require('./package.json');
 const userAgent = `entropysaillog plugin v${package.version}`;
 
@@ -557,6 +558,12 @@ module.exports = function(app) {
     let path = delta.path;
     let value = delta.value;
 
+    // A null position is "no fix": dropped before the gate, so a GPS that lost its
+    // fix but keeps publishing cannot hold the source lock and block the fallback.
+    if (path === 'navigation.position' && !value) {
+      return;
+    }
+
     const gpsSourceBefore = gpsGate.source;
     if (!gpsGate.accepts(path, delta.source, performance.now())) {
       app.debug(`Skipping ${path} from GPS resource ${delta.source}`);
@@ -569,9 +576,6 @@ module.exports = function(app) {
 
     switch (path) {
       case 'navigation.position':
-        if (!value) {
-          break;   // No fix; keep the last one rather than store a null position.
-        }
         position = value;
         position.changedOn = Date.now();
         updateDatabase();

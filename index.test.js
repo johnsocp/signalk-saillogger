@@ -75,6 +75,22 @@ assert.strictEqual(aisRow.latitude, 26.81);
 assert.strictEqual(aisRow.speedOverGround, 5, 'AIS speed only, no USB values carried across the switch');
 assert.strictEqual(aisRow.courseOverGroundTrue, null, 'USB COG cleared at the switch');
 
+// The pinned GPS comes back, then loses its fix but keeps publishing null
+// positions: nulls are not fixes, so they must not hold off the fallback.
+Date.now = () => realNow() + 2 * 61 * 1000;
+send('navigation.position', { latitude: 26.82, longitude: -77.32 }, USB);
+const before = rows().length;
+for (let i = 0; i < 12; i++) {
+  clock += 5000;
+  send('navigation.position', null, USB);
+  send('navigation.position', { latitude: 26.9, longitude: -77.4 }, AIS);
+}
+Date.now = () => realNow() + 3 * 61 * 1000;
+send('navigation.position', { latitude: 26.91, longitude: -77.41 }, AIS);
+r = rows();
+assert.ok(r.length > before, 'AIS rows written while the pinned GPS sends only nulls');
+assert.strictEqual(r[r.length - 1].latitude, 26.91);
+
 plugin.stop();
 fs.rmSync(dataDir, { recursive: true, force: true });
 assert.deepStrictEqual(errors, []);
