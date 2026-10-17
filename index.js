@@ -35,6 +35,7 @@ const { BufferStore } = require('./lib/storage')
 const { buildBatch } = require('./lib/payload')
 const { createCourseTracker, GREAT_CIRCLE } = require('./lib/course')
 const { sign } = require('./lib/auth')
+const { deltaValue, createGpsGate } = require('./lib/delta')
 const package = require('./package.json');
 const userAgent = `entropysaillog plugin v${package.version}`;
 
@@ -47,7 +48,7 @@ module.exports = function(app) {
   var endpoint;
   var apiKey;
   var secret;
-  var gpsSource;
+  var gpsGate;
   var configuration;
   var updateLastCalled;
   var dBInsertInProgress = false;
@@ -75,7 +76,9 @@ module.exports = function(app) {
   // Memoizes the resources lookup, including the failures.
   var waypointNames = {};
 
-  plugin.id = "signalk-saillogger";
+  // Its own id, so it never shares a config file or data dir with an upstream
+  // signalk-saillogger installed beside it (Signal K keys both on the id).
+  plugin.id = "signalk-entropy-saillog";
   plugin.name = "Entropy Sail Log";
   plugin.description = "Pushes Signal K position data to the entropysaillog tracker ingest";
 
@@ -110,7 +113,8 @@ module.exports = function(app) {
       },
       source: {
         type: "string",
-        title: "GPS source (optional; leave empty if unsure)"
+        title: "GPS source (optional; leave empty if unsure)",
+        description: "Preferred $source for position, SOG and COG. If it reports no position for 30 s, other sources are used until it returns."
       },
       coursePrefix: {
         type: "string",
@@ -133,7 +137,7 @@ module.exports = function(app) {
     endpoint = options.endpoint;
     apiKey = options.apiKey;
     secret = options.secret;
-    gpsSource = options.source;
+    gpsGate = createGpsGate(options.source, performance.now());
     coursePrefix = options.coursePrefix || GREAT_CIRCLE;
     courseSource = options.courseSource;
 
@@ -534,17 +538,39 @@ module.exports = function(app) {
     }
   }
 
+  // A new GPS source starts from scratch: the previous one's speed and course must
+  // not end up in a row beside the new one's position. null, not 0, so a row written
+  // before the new source reports SOG omits it rather than claiming 0 kn.
+  function clearGpsCache() {
+    speedOverGround = null;
+    maxSpeedOverGround = null;
+    courseOverGroundTrue = null;
+    previousSpeeds = [];
+    previousCOGs = [];
+  }
+
   function processDelta(data) {
-    let dict = data.updates[0].values[0];
-    let path = dict.path;
-    let value = dict.value;
+    const delta = deltaValue(data);
+    if (!delta) {
+      return;
+    }
+    let path = delta.path;
+    let value = delta.value;
+
+    const gpsSourceBefore = gpsGate.source;
+    if (!gpsGate.accepts(path, delta.source, performance.now())) {
+      app.debug(`Skipping ${path} from GPS resource ${delta.source}`);
+      return;
+    }
+    if (gpsGate.source !== gpsSourceBefore) {
+      app.debug(`GPS source switched from ${gpsSourceBefore} to ${gpsGate.source}`);
+      clearGpsCache();
+    }
 
     switch (path) {
       case 'navigation.position':
-        let source = data.updates[0]['$source'];
-        if ((gpsSource) && (source != gpsSource)) {
-          app.debug(`Skipping position from GPS resource ${source}`);
-          break;
+        if (!value) {
+          break;   // No fix; keep the last one rather than store a null position.
         }
         position = value;
         position.changedOn = Date.now();
